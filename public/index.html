@@ -131,11 +131,13 @@
         </button>
       </form>
 
-      <!-- Switch to Setup -->
+      <!-- Switch to Setup or Direct Access -->
       <div class="pt-3 border-t border-zinc-100 flex items-center justify-between text-xs text-zinc-500">
-        <span>New business?</span>
         <button type="button" @click="goToSetup()" class="font-semibold text-zinc-950 hover:underline">
           Set up business profile →
+        </button>
+        <button type="button" @click="skipAuth()" class="text-xs text-zinc-500 hover:text-zinc-950 underline">
+          Direct Access (Skip) →
         </button>
       </div>
 
@@ -223,9 +225,19 @@
           </div>
         </div>
 
-        <div class="pt-2 flex items-center justify-end">
+        <div class="pt-2 border-t border-zinc-100 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <button type="button" @click="goToLogin()" class="text-xs font-semibold text-zinc-600 hover:text-zinc-950">
+              ← Back to Sign In
+            </button>
+            <span class="text-zinc-300">|</span>
+            <button type="button" @click="skipAuth()" class="text-xs text-zinc-500 hover:text-zinc-950 underline">
+              Direct Access (Skip) →
+            </button>
+          </div>
+
           <button type="submit"
-                  class="w-full sm:w-auto px-6 py-2.5 text-xs font-medium rounded-md bg-zinc-950 text-white hover:bg-zinc-800 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                  class="w-full sm:w-auto px-6 py-2.5 text-xs font-medium rounded-md bg-zinc-950 text-white hover:bg-zinc-800 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
                   :disabled="completingSetup">
             <svg x-show="completingSetup" class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
             <span x-text="completingSetup ? 'Sending code...' : 'Continue to verification →'"></span>
@@ -1499,17 +1511,25 @@
               </div>
 
               <div class="flex items-center gap-2">
+                <button @click="toggleAuthGate()"
+                        type="button"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border transition-colors shadow-2xs"
+                        :class="authGateEnabled ? 'border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100' : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'"
+                        :title="authGateEnabled ? 'Click to turn OFF sign-in gate (Direct workspace access)' : 'Click to turn ON sign-in & setup gate'">
+                  <span class="w-2 h-2 rounded-full" :class="authGateEnabled ? 'bg-zinc-400' : 'bg-emerald-500'"></span>
+                  <span x-text="authGateEnabled ? 'Sign-in Gate: ON' : 'Sign-in Gate: OFF (Direct Access)'"></span>
+                </button>
                 <button @click="resetWorkspace()"
                         type="button"
                         class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border border-rose-200 hover:bg-rose-50 text-rose-700 transition-colors shadow-2xs"
                         title="Reset setup flag to test the initial onboarding gate">
-                  <span>🔄 Reset Setup Gate</span>
+                  <span>Reset Setup Gate</span>
                 </button>
                 <button @click="logout()"
                         type="button"
                         class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border border-zinc-200 hover:bg-zinc-100 text-zinc-800 transition-colors shadow-2xs"
                         title="Log out of AlertPe workspace">
-                  <span>🚪 Log Out</span>
+                  <span>Log Out</span>
                 </button>
               </div>
             </div>

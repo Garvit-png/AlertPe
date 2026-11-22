@@ -200,6 +200,8 @@ function app() {
     verifyingOtp: false,
 
     // Dedicated Auth & Screen States: 'setup' | 'login' | 'verify' | 'error'
+    // authGateEnabled: Set to false to bypass sign-in & enter workspace directly; true to enforce gate.
+    authGateEnabled: false,
     isAuthenticated: false,
     authScreen: 'setup',
     authContext: 'setup', // which flow initiated verification ('setup' or 'login')
@@ -284,36 +286,51 @@ function app() {
       document.documentElement.classList.remove('dark');
       localStorage.removeItem('cp_theme');
 
-      // Check stored auth session
-      const storedAuth = localStorage.getItem('alertpe_authenticated');
+      // Check stored auth gate preference (default is OFF - direct workspace access)
+      const storedGatePref = localStorage.getItem('alertpe_auth_gate_enabled');
+      if (storedGatePref !== null) {
+        this.authGateEnabled = (storedGatePref === 'true');
+      } else {
+        this.authGateEnabled = false; // Default OFF as requested
+      }
 
-      // Fetch profile first
+      // Fetch profile
       await this.loadProfile();
 
-      if (storedAuth === 'true' && this.businessProfile.isVerified && this.businessProfile.isSetupCompleted) {
+      // If sign-in gate is turned off, enter workspace directly
+      if (!this.authGateEnabled) {
         this.isAuthenticated = true;
         await this.loadAllData(false);
         this.connectSSE();
       } else {
-        // Enforce Setup & Login gate upfront with CLEAN, EMPTY inputs (no pre-filled data)
-        this.isAuthenticated = false;
-        this.isLoading = false;
-        this.setupForm = {
-          ownerName: '',
-          businessName: '',
-          phone: '',
-          upiId: '',
-          email: '',
-          otp: ''
-        };
-        this.setupPhoneCountry = '+91';
-        this.setupPhoneLocal = '';
-        this.loginPhoneCountry = '+91';
-        this.loginPhoneLocal = '';
-        this.verifyPhone = '';
-        this.verifyOtp = '';
-        this.authInlineError = '';
-        this.authScreen = (this.businessProfile && this.businessProfile.isSetupCompleted) ? 'login' : 'setup';
+        // Check stored auth session if gate is ON
+        const storedAuth = localStorage.getItem('alertpe_authenticated');
+
+        if (storedAuth === 'true' && this.businessProfile.isVerified && this.businessProfile.isSetupCompleted) {
+          this.isAuthenticated = true;
+          await this.loadAllData(false);
+          this.connectSSE();
+        } else {
+          // Enforce Setup & Login gate upfront with CLEAN, EMPTY inputs (no pre-filled data)
+          this.isAuthenticated = false;
+          this.isLoading = false;
+          this.setupForm = {
+            ownerName: '',
+            businessName: '',
+            phone: '',
+            upiId: '',
+            email: '',
+            otp: ''
+          };
+          this.setupPhoneCountry = '+91';
+          this.setupPhoneLocal = '';
+          this.loginPhoneCountry = '+91';
+          this.loginPhoneLocal = '';
+          this.verifyPhone = '';
+          this.verifyOtp = '';
+          this.authInlineError = '';
+          this.authScreen = (this.businessProfile && this.businessProfile.isSetupCompleted) ? 'login' : 'setup';
+        }
       }
 
       // Global keyboard shortcuts
@@ -462,6 +479,30 @@ function app() {
     goToLogin() {
       this.authInlineError = '';
       this.authScreen = 'login';
+    },
+
+    toggleAuthGate() {
+      this.authGateEnabled = !this.authGateEnabled;
+      localStorage.setItem('alertpe_auth_gate_enabled', this.authGateEnabled ? 'true' : 'false');
+      if (this.authGateEnabled) {
+        this.isAuthenticated = false;
+        this.authScreen = (this.businessProfile && this.businessProfile.isSetupCompleted) ? 'login' : 'setup';
+        showToast('Sign-in & Setup gate turned ON', 'info');
+      } else {
+        this.isAuthenticated = true;
+        this.loadAllData(false);
+        this.connectSSE();
+        showToast('Sign-in gate turned OFF (Direct workspace access)', 'success');
+      }
+    },
+
+    skipAuth() {
+      this.authGateEnabled = false;
+      localStorage.setItem('alertpe_auth_gate_enabled', 'false');
+      this.isAuthenticated = true;
+      this.loadAllData(false);
+      this.connectSSE();
+      showToast('Entered workspace directly (Sign-in gate OFF)', 'success');
     },
 
     showErrorScreen(code, title, message, detail = '', resolution = '', returnScreen = 'setup') {
@@ -643,6 +684,8 @@ function app() {
       } catch (e) {}
       localStorage.removeItem('alertpe_authenticated');
       localStorage.removeItem('alertpe_session_token');
+      this.authGateEnabled = true;
+      localStorage.setItem('alertpe_auth_gate_enabled', 'true');
       this.isAuthenticated = false;
       this.authScreen = 'login';
       this.setupPhoneLocal = '';
@@ -664,6 +707,8 @@ function app() {
       } catch (e) {}
       localStorage.removeItem('alertpe_authenticated');
       localStorage.removeItem('alertpe_session_token');
+      this.authGateEnabled = true;
+      localStorage.setItem('alertpe_auth_gate_enabled', 'true');
       this.isAuthenticated = false;
       this.authScreen = 'setup';
       this.setupForm = {
