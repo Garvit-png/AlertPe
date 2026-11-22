@@ -5,9 +5,20 @@ import { z } from 'zod';
  * Shared schemas for client and server validation
  */
 
-// Phone: E.164 format
+// Phone: Auto-normalize to E.164 and validate
 const phoneSchema = z.string()
-  .regex(/^\+[1-9]\d{1,14}$/, 'Phone must be in E.164 format (e.g., +919876543210)');
+  .transform(val => {
+    if (!val) return '';
+    let cleaned = String(val).trim().replace(/[^\d+]/g, '');
+    if (!cleaned.startsWith('+')) {
+      if (cleaned.length === 10) return '+91' + cleaned;
+      return '+' + cleaned;
+    }
+    return cleaned;
+  })
+  .refine(val => /^\+[1-9]\d{7,14}$/.test(val), {
+    message: 'Phone must be a valid number (e.g. 9876543210 or +919876543210)'
+  });
 
 // Currency amount in rupees (positive, max 2 decimal places)
 const amountSchema = z.number()
@@ -39,12 +50,13 @@ export const createInvoiceSchema = z.object({
   amount: amountSchema,
   description: z.string().min(1, 'Description is required').max(200, 'Description too long').trim(),
   dueDate: dateSchema,
-  reminderIntervalDays: z.number().int().positive().max(30).default(2)
+  reminderIntervalDays: z.number().int().positive().max(30).default(2),
+  paymentLink: z.string().optional().or(z.literal(''))
 });
 
 export const updateInvoiceSchema = createInvoiceSchema.partial().extend({
   status: z.enum(['DRAFT', 'PENDING', 'REMINDER_SENT', 'PAID', 'OVERDUE']).optional(),
-  paymentLink: z.string().url().optional(),
+  paymentLink: z.string().optional().or(z.literal('')),
   paymentGatewayId: z.string().optional(),
   transactionId: z.string().optional()
 });
@@ -79,7 +91,7 @@ export const invoiceQuerySchema = z.object({
   fromDate: dateSchema.optional(),
   toDate: dateSchema.optional(),
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(20),
+  limit: z.coerce.number().int().positive().max(500).default(50),
   sort: z.enum(['dueDate', 'createdAt', 'amount', 'invoiceNumber']).default('dueDate'),
   order: z.enum(['asc', 'desc']).default('asc')
 });
@@ -90,7 +102,7 @@ export const billQuerySchema = z.object({
   fromDate: dateSchema.optional(),
   toDate: dateSchema.optional(),
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(20),
+  limit: z.coerce.number().int().positive().max(500).default(50),
   sort: z.enum(['dueDate', 'createdAt', 'amount', 'vendorName']).default('dueDate'),
   order: z.enum(['asc', 'desc']).default('asc')
 });
@@ -98,7 +110,7 @@ export const billQuerySchema = z.object({
 export const clientQuerySchema = z.object({
   search: z.string().optional(),
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(20),
+  limit: z.coerce.number().int().positive().max(500).default(50),
   sort: z.enum(['name', 'createdAt', 'totalOwed']).default('createdAt'),
   order: z.enum(['asc', 'desc']).default('desc')
 });

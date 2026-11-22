@@ -113,8 +113,11 @@ async function start() {
     logger.info({ stackLen: simulationRoutes.stack?.length }, 'Loaded simulations routes');
     const reminderRoutes = (await import('./routes/reminders.js')).default;
     logger.info({ stackLen: reminderRoutes.stack?.length }, 'Loaded reminders routes');
+    const authRoutes = (await import('./routes/auth.js')).default;
+    logger.info({ stackLen: authRoutes.stack?.length }, 'Loaded auth routes');
     
     // Mount API routes
+    app.use('/api/auth', authRoutes);
     app.use('/api/clients', clientRoutes);
     app.use('/api/invoices', mutationLimiter, invoiceRoutes);
     app.use('/api/bills', mutationLimiter, billRoutes);
@@ -142,6 +145,16 @@ async function start() {
         return next();
       }
       res.sendFile(join(__dirname, 'public', 'index.html'));
+    });
+
+    // --- Catch-all 404 handler for undefined API routes ---
+    app.all('/api/*', (req, res) => {
+      res.status(404).json({
+        success: false,
+        error: `404 Not Found: ${req.method} ${req.originalUrl} does not exist`,
+        code: 'NOT_FOUND',
+        details: 'The requested API endpoint was not found on this AlertPe server. Check the URL and HTTP method.'
+      });
     });
     
     // --- Error Handler ---

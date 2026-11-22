@@ -175,12 +175,17 @@ invoiceSchema.statics.getDueForReminder = function() {
   const now = new Date();
   return this.find({
     status: { $in: ['PENDING', 'REMINDER_SENT'] },
-    $expr: {
-      $gte: [
-        { $subtract: [now, '$lastReminderSentAt'] },
-        { $multiply: ['$reminderIntervalDays', 24, 60, 60, 1000] }
-      ]
-    }
+    $or: [
+      { lastReminderSentAt: null },
+      {
+        $expr: {
+          $gte: [
+            { $subtract: [now, '$lastReminderSentAt'] },
+            { $multiply: ['$reminderIntervalDays', 24, 60, 60, 1000] }
+          ]
+        }
+      }
+    ]
   }).populate('clientId', 'name phone whatsappOptOut');
 };
 

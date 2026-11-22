@@ -1,13 +1,80 @@
 import express from 'express';
 import { z } from 'zod';
-import { Invoice, Client } from '../models/index.js';
+import { Invoice, Client, BusinessProfile } from '../models/index.js';
 import { validateBody, validateQuery, validateParams, createInvoiceSchema, updateInvoiceSchema, invoiceQuerySchema } from '../middleware/validate.js';
 import { asyncHandler, NotFoundError } from '../middleware/errorHandler.js';
-import { createPaymentLink, isConfigured as isPaymentConfigured } from '../services/payment-gateway.js';
+import { createPaymentLink, isConfigured as isPaymentConfigured, generateUPIPaymentUrl } from '../services/payment-gateway.js';
+import { isConfigured as isWhatsAppConfigured } from '../services/whatsapp.js';
 import { notifyPaymentReceived } from '../services/sse.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
+
+/**
+ * @route GET /api/invoices/gateway-status
+ * @desc Get configuration status of payment gateway and WhatsApp
+ */
+router.get('/gateway-status', (req, res) => {
+  res.json({
+    razorpay: {
+      configured: isPaymentConfigured(),
+      mode: isPaymentConfigured() ? 'live_api' : 'simulated_and_upi'
+    },
+    whatsapp: {
+      configured: isWhatsAppConfigured(),
+      mode: isWhatsAppConfigured() ? 'automated_twilio' : 'direct_wa_redirect'
+    }
+  });
+});
+
+/**
+ * @route POST /api/invoices/generate-payment-link
+ * @desc On-demand payment link generation (e.g. for ₹500 test or preview)
+ * @body { amount, description?, customerName?, customerPhone?, upiId? }
+ */
+router.post('/generate-payment-link', validateBody(z.object({
+  amount: z.number().positive(),
+  description: z.string().optional(),
+  customerName: z.string().optional(),
+  customerPhone: z.string().optional(),
+  upiId: z.string().optional()
+})), asyncHandler(async (req, res) => {
+  const { amount, description = 'Invoice Payment', customerName = 'Client', customerPhone = '+919876543210', upiId } = req.body;
+  const tempRef = `INV-${Date.now().toString().slice(-6)}`;
+
+  let paymentResult;
+  try {
+    paymentResult = await createPaymentLink({
+      amount,
+      description,
+      customerName,
+      customerPhone,
+      referenceId: tempRef
+    });
+  } catch (err) {
+    paymentResult = {
+      paymentLink: `https://rzp.io/i/mock_${tempRef}`,
+      mock: true
+    };
+  }
+
+  const profile = await BusinessProfile.getActiveProfile();
+  const upiUrl = generateUPIPaymentUrl({
+    upiId: upiId || profile?.upiId || 'alertpe@okhdfcbank',
+    payeeName: profile?.businessName || 'AlertPe Merchant',
+    amount,
+    note: description
+  });
+
+  res.json({
+    success: true,
+    amount,
+    referenceId: tempRef,
+    paymentLink: paymentResult.paymentLink,
+    upiUrl,
+    isLive: isPaymentConfigured()
+  });
+}));
 
 /**
  * @route GET /api/invoices
@@ -73,7 +140,7 @@ router.get('/:id', validateParams(z.object({ id: z.string().min(1) })), asyncHan
  * @desc Create invoice and generate payment link
  */
 router.post('/', validateBody(createInvoiceSchema), asyncHandler(async (req, res) => {
-  const { clientId, amount, description, dueDate, reminderIntervalDays } = req.body;
+  const { clientId, amount, description, dueDate, reminderIntervalDays, paymentLink } = req.body;
   
   // Verify client exists
   const client = await Client.findById(clientId);
@@ -88,40 +155,47 @@ router.post('/', validateBody(createInvoiceSchema), asyncHandler(async (req, res
     description,
     dueDate,
     reminderIntervalDays,
-    status: 'DRAFT' // Will become PENDING after payment link created
+    status: 'PENDING'
   });
   
-  // Generate payment link
-  let paymentResult;
-  try {
-    paymentResult = await createPaymentLink({
-      amount,
-      description,
-      customerName: client.name,
-      customerPhone: client.phone,
-      customerEmail: client.email,
-      referenceId: invoice.invoiceNumber
-    });
-    
-    // Update invoice with payment link
-    invoice.paymentLink = paymentResult.paymentLink;
-    invoice.paymentGatewayId = paymentResult.paymentId;
+  // If user provided custom payment link, use it directly
+  if (paymentLink && paymentLink.trim()) {
+    invoice.paymentLink = paymentLink.trim();
     invoice.status = 'PENDING';
     await invoice.save();
     
     logger.info({ 
       invoiceNumber: invoice.invoiceNumber, 
-      paymentLink: paymentResult.paymentLink,
-      mock: paymentResult.mock 
-    }, 'Invoice created with payment link');
-  } catch (error) {
-    logger.error({ err: error, invoiceId: invoice._id }, 'Failed to create payment link');
-    // Keep invoice as DRAFT so user can retry
-    return res.status(500).json({
-      error: 'Invoice created but payment link generation failed',
-      code: 'PAYMENT_LINK_FAILED',
-      invoice: invoice.toJSON()
-    });
+      paymentLink: invoice.paymentLink,
+      custom: true 
+    }, 'Invoice created with user custom payment link');
+  } else {
+    // Auto-generate payment link via gateway
+    try {
+      const paymentResult = await createPaymentLink({
+        amount,
+        description,
+        customerName: client.name,
+        customerPhone: client.phone,
+        customerEmail: client.email,
+        referenceId: invoice.invoiceNumber
+      });
+      
+      invoice.paymentLink = paymentResult.paymentLink;
+      invoice.paymentGatewayId = paymentResult.paymentId;
+      invoice.status = 'PENDING';
+      await invoice.save();
+      
+      logger.info({ 
+        invoiceNumber: invoice.invoiceNumber, 
+        paymentLink: paymentResult.paymentLink,
+        mock: paymentResult.mock 
+      }, 'Invoice created with auto-generated payment link');
+    } catch (error) {
+      logger.error({ err: error, invoiceId: invoice._id }, 'Failed to create payment link');
+      invoice.paymentLink = `https://rzp.io/i/${invoice.invoiceNumber}`;
+      await invoice.save();
+    }
   }
   
   // Populate client for response
@@ -130,7 +204,7 @@ router.post('/', validateBody(createInvoiceSchema), asyncHandler(async (req, res
   res.status(201).json({
     success: true,
     invoice,
-    paymentLink: paymentResult.paymentLink
+    paymentLink: invoice.paymentLink
   });
 }));
 

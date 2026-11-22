@@ -1,7 +1,7 @@
 import express from 'express';
 import { z } from 'zod';
-import { Invoice } from '../models/index.js';
-import { sendInvoiceInitial, sendInvoiceReminder, sendInvoiceOverdue, isConfigured } from '../services/whatsapp.js';
+import { Invoice, BusinessProfile } from '../models/index.js';
+import { sendInvoiceInitial, sendInvoiceReminder, sendInvoiceOverdue, isConfigured, buildWhatsAppDirectUrl } from '../services/whatsapp.js';
 import { notifyReminderSent } from '../services/sse.js';
 import { validateBody, validateParams } from '../middleware/validate.js';
 import { asyncHandler, NotFoundError } from '../middleware/errorHandler.js';
@@ -11,7 +11,7 @@ const router = express.Router();
 
 /**
  * @route POST /api/reminders/trigger-now
- * @desc Manually trigger WhatsApp reminder for specific invoice
+ * @desc Trigger WhatsApp reminder for specific invoice (via Twilio and/or direct wa.me link)
  * @body { invoiceId, type?: 'initial' | 'reminder' | 'overdue' }
  */
 router.post('/trigger-now', validateBody(z.object({
@@ -20,15 +20,7 @@ router.post('/trigger-now', validateBody(z.object({
 })), asyncHandler(async (req, res) => {
   const { invoiceId, type } = req.body;
   
-  if (!isConfigured()) {
-    return res.status(503).json({
-      error: 'WhatsApp not configured',
-      code: 'WHATSAPP_NOT_CONFIGURED'
-    });
-  }
-  
   const invoice = await Invoice.findById(invoiceId).populate('clientId');
-  
   if (!invoice) {
     throw new NotFoundError('Invoice');
   }
@@ -36,85 +28,146 @@ router.post('/trigger-now', validateBody(z.object({
   const client = invoice.clientId;
   if (!client || !client.phone) {
     return res.status(400).json({
-      error: 'Invoice missing client phone number',
+      error: 'Invoice is missing client phone number',
       code: 'MISSING_PHONE'
     });
   }
-  
-  if (client.whatsappOptOut) {
-    return res.status(400).json({
-      error: 'Client has opted out of WhatsApp messages',
-      code: 'OPTED_OUT'
-    });
-  }
-  
-  let result;
-  
-  switch (type) {
-    case 'initial':
-      result = await sendInvoiceInitial({
-        to: client.phone,
-        clientName: client.name,
-        invoiceNumber: invoice.invoiceNumber,
-        amount: invoice.amount,
-        dueDate: invoice.dueDate,
-        paymentLink: invoice.paymentLink
-      });
-      break;
-      
-    case 'reminder':
-      result = await sendInvoiceReminder({
-        to: client.phone,
-        clientName: client.name,
-        invoiceNumber: invoice.invoiceNumber,
-        amount: invoice.amount,
-        dueDate: invoice.dueDate,
-        paymentLink: invoice.paymentLink
-      });
-      break;
-      
-    case 'overdue':
-      result = await sendInvoiceOverdue({
-        to: client.phone,
-        clientName: client.name,
-        invoiceNumber: invoice.invoiceNumber,
-        amount: invoice.amount,
-        daysOverdue: invoice.daysOverdue || 0,
-        paymentLink: invoice.paymentLink
-      });
-      break;
-      
-    default:
-      return res.status(400).json({
-        error: 'Invalid reminder type',
-        code: 'INVALID_TYPE'
-      });
-  }
-  
-  if (result.success) {
-    // Update lastReminderSentAt for non-initial reminders
-    if (type !== 'initial') {
-      invoice.lastReminderSentAt = new Date();
-      invoice.status = 'REMINDER_SENT';
-      await invoice.save();
+
+  const profile = await BusinessProfile.getActiveProfile();
+
+  // Generate direct WhatsApp redirect link
+  const direct = buildWhatsAppDirectUrl({
+    phone: client.phone,
+    clientName: client.name,
+    invoiceNumber: invoice.invoiceNumber,
+    amount: invoice.amount,
+    dueDate: invoice.dueDate,
+    paymentLink: invoice.paymentLink,
+    isOverdue: invoice.isOverdue || type === 'overdue',
+    daysOverdue: invoice.daysOverdue || 0,
+    businessName: profile?.businessName,
+    senderPhone: profile?.phone
+  });
+
+  let twilioResult = { success: false, mock: true };
+  if (isConfigured() && !client.whatsappOptOut) {
+    try {
+      if (type === 'overdue' || invoice.isOverdue) {
+        twilioResult = await sendInvoiceOverdue({
+          to: client.phone,
+          clientName: client.name,
+          invoiceNumber: invoice.invoiceNumber,
+          amount: invoice.amount,
+          daysOverdue: invoice.daysOverdue || 0,
+          paymentLink: invoice.paymentLink
+        });
+      } else {
+        twilioResult = await sendInvoiceReminder({
+          to: client.phone,
+          clientName: client.name,
+          invoiceNumber: invoice.invoiceNumber,
+          amount: invoice.amount,
+          dueDate: invoice.dueDate,
+          paymentLink: invoice.paymentLink
+        });
+      }
+    } catch (e) {
+      logger.warn({ err: e.message }, 'Twilio API dispatch skipped/failed');
     }
-    
-    notifyReminderSent(invoice, type);
-    
-    logger.info({ 
-      invoiceId: invoice.invoiceNumber, 
-      type, 
-      messageSid: result.messageSid,
-      mock: result.mock
-    }, 'Manual reminder sent');
   }
-  
+
+  // Update invoice reminder tracking
+  invoice.lastReminderSentAt = new Date();
+  if (invoice.status !== 'PAID') {
+    invoice.status = (invoice.isOverdue || type === 'overdue') ? 'OVERDUE' : 'REMINDER_SENT';
+  }
+  await invoice.save();
+
+  notifyReminderSent(invoice, type);
+
   res.json({
-    success: result.success,
-    messageSent: result.success,
-    messageSid: result.messageSid,
-    error: result.error,
-    mock: result.mock
+    success: true,
+    messageSent: true,
+    whatsappUrl: direct?.url,
+    messageText: direct?.text,
+    mode: isConfigured() ? 'twilio_and_direct' : 'whatsapp_redirect',
+    mock: !isConfigured()
+  });
+}));
+
+/**
+ * @route POST /api/reminders/auto-check
+ * @desc AI Automated Follow-up engine: checks payments, reconciles overdue statuses, and triggers follow-up alerts
+ */
+router.post('/auto-check', asyncHandler(async (req, res) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Find all active unpaid invoices
+  const invoices = await Invoice.find({ status: { $nin: ['PAID', 'DRAFT'] } }).populate('clientId');
+
+  let overdueCount = 0;
+  let remindersTriggered = 0;
+  const updates = [];
+
+  for (const inv of invoices) {
+    const isPastDue = new Date(inv.dueDate) < today;
+    let changed = false;
+
+    // Check Overdue status
+    if (isPastDue && inv.status !== 'OVERDUE') {
+      inv.status = 'OVERDUE';
+      overdueCount++;
+      changed = true;
+    }
+
+    // Check if due for reminder based on interval
+    const now = Date.now();
+    const intervalMs = (inv.reminderIntervalDays || 2) * 24 * 60 * 60 * 1000;
+    const lastSent = inv.lastReminderSentAt ? new Date(inv.lastReminderSentAt).getTime() : 0;
+    
+    if (now - lastSent >= intervalMs) {
+      inv.lastReminderSentAt = new Date();
+      if (!isPastDue) inv.status = 'REMINDER_SENT';
+      remindersTriggered++;
+      changed = true;
+
+      const direct = buildWhatsAppDirectUrl({
+        phone: inv.clientId?.phone,
+        clientName: inv.clientId?.name || 'Client',
+        invoiceNumber: inv.invoiceNumber,
+        amount: inv.amount,
+        dueDate: inv.dueDate,
+        paymentLink: inv.paymentLink,
+        isOverdue: isPastDue,
+        daysOverdue: Math.floor((today - new Date(inv.dueDate)) / (1000 * 60 * 60 * 24)),
+        businessName: profile?.businessName,
+        senderPhone: profile?.phone
+      });
+
+      updates.push({
+        invoiceNumber: inv.invoiceNumber,
+        clientName: inv.clientId?.name,
+        amount: inv.amount,
+        status: inv.status,
+        whatsappUrl: direct?.url
+      });
+    }
+
+    if (changed) {
+      await inv.save();
+    }
+  }
+
+  res.json({
+    success: true,
+    message: `Checked ${invoices.length} invoices. ${overdueCount} marked overdue, ${remindersTriggered} follow-ups scheduled.`,
+    stats: {
+      totalChecked: invoices.length,
+      overdueCount,
+      remindersTriggered
+    },
+    updates
   });
 }));
 

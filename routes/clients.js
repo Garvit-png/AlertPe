@@ -87,7 +87,21 @@ router.get('/:id', validateParams(z.object({ id: z.string().min(1) })), asyncHan
  * @desc Create new client
  */
 router.post('/', validateBody(createClientSchema), asyncHandler(async (req, res) => {
-  const client = await Client.create(req.body);
+  const payload = { ...req.body };
+  if (!payload.email || payload.email.trim() === '') {
+    delete payload.email;
+  }
+  
+  // Check duplicate phone
+  const existing = await Client.findOne({ phone: payload.phone });
+  if (existing) {
+    return res.status(409).json({
+      error: `A client with phone ${payload.phone} already exists (${existing.name})`,
+      field: 'phone'
+    });
+  }
+  
+  const client = await Client.create(payload);
   
   res.status(201).json({
     success: true,

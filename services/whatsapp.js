@@ -13,8 +13,8 @@ function getTwilioClient() {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
     
-    if (!accountSid || !authToken) {
-      logger.warn('Twilio credentials not configured');
+    if (!accountSid || !authToken || accountSid.includes('xxxx') || authToken.includes('your_')) {
+      logger.info('Twilio credentials not configured or placeholder used. WhatsApp running in direct redirect mode.');
       return null;
     }
     
@@ -171,10 +171,38 @@ function formatDate(date) {
 }
 
 /**
- * Check if WhatsApp is configured
+ * Check if WhatsApp Twilio API is fully configured
  */
 export function isConfigured() {
-  return !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  return !!(sid && token && !sid.includes('xxxx') && !token.includes('your_'));
+}
+
+/**
+ * Generate a pre-filled direct WhatsApp redirect link (WhatsApp Web / App)
+ */
+export function buildWhatsAppDirectUrl({ phone, clientName, invoiceNumber, amount, dueDate, paymentLink, isOverdue, daysOverdue, businessName, senderPhone }) {
+  if (!phone) return null;
+  const cleanPhone = phone.replace(/[^\d]/g, '');
+  const formattedDate = formatDate(dueDate);
+  const formattedAmount = `₹${Number(amount).toLocaleString('en-IN')}`;
+  const link = paymentLink || `https://rzp.io/i/${invoiceNumber}`;
+  const bName = businessName || 'AlertPe Finance';
+  const contactLine = senderPhone ? `\nWhatsApp: ${senderPhone}` : '';
+
+  let message = '';
+  if (isOverdue) {
+    message = `*${bName} - Payment Overdue Notice*\n\nHello ${clientName},\nThis is an urgent reminder that invoice *#${invoiceNumber}* for *${formattedAmount}* was due on *${formattedDate}* and is now overdue.\n\nPlease clear the payment immediately using this link:\n${link}\n\nThank you,\n${bName}${contactLine}`;
+  } else {
+    message = `*${bName} - Invoice Reminder*\n\nHello ${clientName},\nThis is a friendly reminder that invoice *#${invoiceNumber}* for *${formattedAmount}* is due on *${formattedDate}*.\n\nYou can pay quickly and securely via UPI / Cards here:\n${link}\n\nThank you,\n${bName}${contactLine}`;
+  }
+
+  return {
+    url: `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`,
+    text: message,
+    phone: cleanPhone
+  };
 }
 
 /**

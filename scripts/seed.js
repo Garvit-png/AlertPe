@@ -17,13 +17,9 @@ const addDays = (date, days) => {
   return d;
 };
 
-async function seed() {
-  try {
-    await connectDB();
-    logger.info('Connected to database, seeding demo data...');
-    
-    // Clear existing data for fresh seed
-    await Promise.all([Client.deleteMany({}), Invoice.deleteMany({}), Bill.deleteMany({})]);
+export async function populateDemoData() {
+  // Clear existing data for fresh seed
+  await Promise.all([Client.deleteMany({}), Invoice.deleteMany({}), Bill.deleteMany({})]);
     
     // Create Clients
     const clients = await Client.create([
@@ -251,9 +247,14 @@ async function seed() {
     console.log('\n🎯 Ready for demo!');
     console.log('   - 2 overdue invoices (red flags)');
     console.log('   - 1 overdue bill (electricity)');
-    console.log('   - Rent due in 2 days');
-    console.log('   - Salaries due in 5 days');
-    
+    return stats;
+}
+
+export async function seed() {
+  try {
+    await connectDB();
+    logger.info('Connected to database, seeding demo data...');
+    await populateDemoData();
   } catch (error) {
     logger.error({ err: error }, 'Seeding failed');
     throw error;
