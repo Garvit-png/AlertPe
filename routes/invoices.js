@@ -155,7 +155,7 @@ router.get('/:id', validateParams(z.object({ id: z.string().min(1) })), asyncHan
  * @desc Create invoice and generate payment link
  */
 router.post('/', validateBody(createInvoiceSchema), asyncHandler(async (req, res) => {
-  const { clientId, amount, description, dueDate, reminderIntervalDays, paymentLink } = req.body;
+  const { clientId, amount, description, dueDate, dueTime, reminderIntervalDays, reminderTime, paymentLink } = req.body;
   
   if (mongoose.connection.readyState !== 1) {
     const newInv = addOfflineInvoice({
@@ -163,7 +163,9 @@ router.post('/', validateBody(createInvoiceSchema), asyncHandler(async (req, res
       amount,
       description,
       dueDate,
+      dueTime: dueTime || '18:00',
       reminderIntervalDays,
+      reminderTime: reminderTime || '16:00',
       paymentLink: paymentLink || `https://rzp.io/i/mock_INV-${Date.now().toString().slice(-4)}`
     });
     return res.status(201).json(newInv);
@@ -181,7 +183,9 @@ router.post('/', validateBody(createInvoiceSchema), asyncHandler(async (req, res
     amount,
     description,
     dueDate,
+    dueTime: dueTime || '18:00',
     reminderIntervalDays,
+    reminderTime: reminderTime || '16:00',
     status: 'PENDING'
   });
   

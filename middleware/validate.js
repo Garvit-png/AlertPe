@@ -50,7 +50,9 @@ export const createInvoiceSchema = z.object({
   amount: amountSchema,
   description: z.string().min(1, 'Description is required').max(200, 'Description too long').trim(),
   dueDate: dateSchema,
+  dueTime: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/, 'Invalid time format (HH:mm)').default('18:00').optional(),
   reminderIntervalDays: z.number().int().positive().max(30).default(2),
+  reminderTime: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/, 'Invalid time format (HH:mm)').default('16:00').optional(),
   paymentLink: z.string().optional().or(z.literal(''))
 });
 

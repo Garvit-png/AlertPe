@@ -227,6 +227,8 @@ export function addOfflineInvoice(invData) {
     id: `inv_${Date.now()}`,
     ...invData,
     clientId: client,
+    dueTime: invData.dueTime || '18:00',
+    reminderTime: invData.reminderTime || '16:00',
     status: invData.status || 'PENDING',
     createdAt: new Date().toISOString()
   };

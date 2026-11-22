@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { z } from 'zod';
 import { Invoice, BusinessProfile } from '../models/index.js';
 import { sendInvoiceInitial, sendInvoiceReminder, sendInvoiceOverdue, isConfigured, buildWhatsAppDirectUrl } from '../services/whatsapp.js';
@@ -6,6 +7,7 @@ import { notifyReminderSent } from '../services/sse.js';
 import { validateBody, validateParams } from '../middleware/validate.js';
 import { asyncHandler, NotFoundError } from '../middleware/errorHandler.js';
 import logger from '../utils/logger.js';
+import { findOfflineInvoice } from '../services/offline-store.js';
 
 const router = express.Router();
 
@@ -20,7 +22,13 @@ router.post('/trigger-now', validateBody(z.object({
 })), asyncHandler(async (req, res) => {
   const { invoiceId, type } = req.body;
   
-  const invoice = await Invoice.findById(invoiceId).populate('clientId');
+  let invoice = null;
+  if (mongoose.connection.readyState === 1) {
+    invoice = await Invoice.findById(invoiceId).populate('clientId');
+  } else {
+    invoice = findOfflineInvoice(invoiceId);
+  }
+
   if (!invoice) {
     throw new NotFoundError('Invoice');
   }
@@ -42,6 +50,7 @@ router.post('/trigger-now', validateBody(z.object({
     invoiceNumber: invoice.invoiceNumber,
     amount: invoice.amount,
     dueDate: invoice.dueDate,
+    dueTime: invoice.dueTime,
     paymentLink: invoice.paymentLink,
     isOverdue: invoice.isOverdue || type === 'overdue',
     daysOverdue: invoice.daysOverdue || 0,
@@ -110,8 +119,19 @@ router.post('/auto-check', asyncHandler(async (req, res) => {
   let remindersTriggered = 0;
   const updates = [];
 
+  const profile = await BusinessProfile.getActiveProfile();
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
+
   for (const inv of invoices) {
-    const isPastDue = new Date(inv.dueDate) < today;
+    // Exact deadline check with Due Date + Due Time
+    let dueDateTime = new Date(inv.dueDate);
+    if (inv.dueTime && inv.dueTime.includes(':')) {
+      const [h, m] = inv.dueTime.split(':').map(Number);
+      dueDateTime.setHours(h || 0, m || 0, 0, 0);
+    }
+    const isPastDue = now > dueDateTime;
     let changed = false;
 
     // Check Overdue status
@@ -121,13 +141,17 @@ router.post('/auto-check', asyncHandler(async (req, res) => {
       changed = true;
     }
 
-    // Check if due for reminder based on interval
-    const now = Date.now();
+    // Check if due for reminder based on interval and specific daily send time
     const intervalMs = (inv.reminderIntervalDays || 2) * 24 * 60 * 60 * 1000;
     const lastSent = inv.lastReminderSentAt ? new Date(inv.lastReminderSentAt).getTime() : 0;
     
-    if (now - lastSent >= intervalMs) {
-      inv.lastReminderSentAt = new Date();
+    // Check reminder time of day (e.g. '16:00' -> 4:00 PM)
+    const [targetHour, targetMinute] = (inv.reminderTime || '16:00').split(':').map(Number);
+    const isTimeReached = (currentHour > targetHour) || (currentHour === targetHour && currentMinute >= targetMinute);
+    const isIntervalElapsed = (now.getTime() - lastSent) >= intervalMs;
+
+    if (isTimeReached && isIntervalElapsed) {
+      inv.lastReminderSentAt = now;
       if (!isPastDue) inv.status = 'REMINDER_SENT';
       remindersTriggered++;
       changed = true;
@@ -138,9 +162,10 @@ router.post('/auto-check', asyncHandler(async (req, res) => {
         invoiceNumber: inv.invoiceNumber,
         amount: inv.amount,
         dueDate: inv.dueDate,
+        dueTime: inv.dueTime,
         paymentLink: inv.paymentLink,
         isOverdue: isPastDue,
-        daysOverdue: Math.floor((today - new Date(inv.dueDate)) / (1000 * 60 * 60 * 24)),
+        daysOverdue: Math.floor((now - dueDateTime) / (1000 * 60 * 60 * 24)),
         businessName: profile?.businessName,
         senderPhone: profile?.phone
       });

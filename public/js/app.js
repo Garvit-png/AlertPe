@@ -29,6 +29,19 @@ function formatDateInput(dateStr) {
   return date.toISOString().split('T')[0];
 }
 
+// Format 24-hour time string (HH:mm) to 12-hour AM/PM string
+function formatTime12(timeStr) {
+  if (!timeStr) return '';
+  const [hStr, mStr] = String(timeStr).split(':');
+  let h = parseInt(hStr, 10);
+  if (isNaN(h)) return timeStr;
+  const m = mStr || '00';
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+window.formatTime12 = formatTime12;
+
 // Format humanized relative date
 function formatRelative(dateStr, isPaid = false) {
   if (!dateStr) return '—';
@@ -266,12 +279,16 @@ function app() {
       amount: '', 
       description: '', 
       dueDate: '', 
+      dueTime: '18:00',
       reminderIntervalDays: 2,
+      reminderTime: '16:00',
       paymentLinkMode: 'auto',
       paymentLink: ''
     },
     billForm: { vendorName: '', amount: '', category: 'Other', dueDate: '', notes: '' },
     clientForm: { name: '', phone: '', email: '', businessCategory: 'General', notes: '' },
+    clientPhoneCountry: '+91',
+    clientPhoneLocal: '',
     generatingLink: false,
     gatewayStatus: { razorpay: { configured: false }, whatsapp: { configured: false } },
 
@@ -443,6 +460,14 @@ function app() {
 
     closeProfileModal() {
       this.showProfileModal = false;
+    },
+
+    splitPhone(p) {
+      return splitPhone(p);
+    },
+
+    formatTime12(t) {
+      return formatTime12(t);
     },
 
     async saveProfile() {
@@ -1122,7 +1147,9 @@ function app() {
         amount: '',
         description: '',
         dueDate: formatDateInput(tomorrow),
+        dueTime: '18:00',
         reminderIntervalDays: 2,
+        reminderTime: '16:00',
         paymentLinkMode: 'auto',
         paymentLink: ''
       };
@@ -1167,7 +1194,9 @@ function app() {
           amount: invoice.amount,
           description: invoice.description,
           dueDate: formatDateInput(invoice.dueDate),
+          dueTime: invoice.dueTime || '18:00',
           reminderIntervalDays: invoice.reminderIntervalDays || 2,
+          reminderTime: invoice.reminderTime || '16:00',
           paymentLinkMode: invoice.paymentLink ? 'custom' : 'auto',
           paymentLink: invoice.paymentLink || ''
         };
@@ -1179,7 +1208,9 @@ function app() {
           amount: '',
           description: '',
           dueDate: formatDateInput(tomorrow),
+          dueTime: '18:00',
           reminderIntervalDays: 2,
+          reminderTime: '16:00',
           paymentLinkMode: 'auto',
           paymentLink: ''
         };
@@ -1305,6 +1336,9 @@ function app() {
     openClientModal(client = null) {
       this.editingClient = client;
       if (client) {
+        const split = this.splitPhone(client.phone);
+        this.clientPhoneCountry = split.country || '+91';
+        this.clientPhoneLocal = split.local || '';
         this.clientForm = {
           name: client.name,
           phone: client.phone,
@@ -1313,9 +1347,11 @@ function app() {
           notes: client.notes || ''
         };
       } else {
+        this.clientPhoneCountry = '+91';
+        this.clientPhoneLocal = '';
         this.clientForm = {
           name: '',
-          phone: '+91',
+          phone: '',
           email: '',
           businessCategory: 'Consulting',
           notes: ''
@@ -1344,13 +1380,18 @@ function app() {
     },
 
     async saveClient() {
-      if (!this.clientForm.name || !this.clientForm.phone) {
-        showToast('Name and phone are required', 'error');
+      const localPhone = String(this.clientPhoneLocal || '').trim();
+      if (!this.clientForm.name) {
+        showToast('Client name is required', 'error');
+        return;
+      }
+      if (!localPhone || localPhone.length < 6) {
+        showToast('Please enter a valid phone number (e.g. 98765 43210)', 'error');
         return;
       }
 
-      // Automatically normalize phone
-      this.clientForm.phone = normalizePhone(this.clientForm.phone);
+      const fullPhone = `${this.clientPhoneCountry}${localPhone}`;
+      this.clientForm.phone = fullPhone;
       const payload = { ...this.clientForm };
       if (!payload.email || payload.email.trim() === '') {
         delete payload.email;

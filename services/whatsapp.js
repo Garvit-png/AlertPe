@@ -171,6 +171,19 @@ function formatDate(date) {
 }
 
 /**
+ * Format 24h time to 12h AM/PM
+ */
+function formatTime12h(timeStr) {
+  if (!timeStr) return '';
+  const [hStr, mStr] = timeStr.split(':');
+  let h = parseInt(hStr, 10);
+  const m = mStr || '00';
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+
+/**
  * Check if WhatsApp Twilio API is fully configured
  */
 export function isConfigured() {
@@ -182,10 +195,12 @@ export function isConfigured() {
 /**
  * Generate a pre-filled direct WhatsApp redirect link (WhatsApp Web / App)
  */
-export function buildWhatsAppDirectUrl({ phone, clientName, invoiceNumber, amount, dueDate, paymentLink, isOverdue, daysOverdue, businessName, senderPhone }) {
+export function buildWhatsAppDirectUrl({ phone, clientName, invoiceNumber, amount, dueDate, dueTime, paymentLink, isOverdue, daysOverdue, businessName, senderPhone }) {
   if (!phone) return null;
   const cleanPhone = phone.replace(/[^\d]/g, '');
   const formattedDate = formatDate(dueDate);
+  const timeSuffix = dueTime ? ` by ${formatTime12h(dueTime)}` : '';
+  const formattedDeadline = `${formattedDate}${timeSuffix}`;
   const formattedAmount = `₹${Number(amount).toLocaleString('en-IN')}`;
   const link = paymentLink || `https://rzp.io/i/${invoiceNumber}`;
   const bName = businessName || 'AlertPe Finance';
@@ -193,9 +208,9 @@ export function buildWhatsAppDirectUrl({ phone, clientName, invoiceNumber, amoun
 
   let message = '';
   if (isOverdue) {
-    message = `*${bName} - Payment Overdue Notice*\n\nHello ${clientName},\nThis is an urgent reminder that invoice *#${invoiceNumber}* for *${formattedAmount}* was due on *${formattedDate}* and is now overdue.\n\nPlease clear the payment immediately using this link:\n${link}\n\nThank you,\n${bName}${contactLine}`;
+    message = `*${bName} - Payment Overdue Notice*\n\nHello ${clientName},\nThis is an urgent reminder that invoice *#${invoiceNumber}* for *${formattedAmount}* was due on *${formattedDeadline}* and has now expired.\n\nPlease clear the payment immediately using this link:\n${link}\n\nThank you,\n${bName}${contactLine}`;
   } else {
-    message = `*${bName} - Invoice Reminder*\n\nHello ${clientName},\nThis is a friendly reminder that invoice *#${invoiceNumber}* for *${formattedAmount}* is due on *${formattedDate}*.\n\nYou can pay quickly and securely via UPI / Cards here:\n${link}\n\nThank you,\n${bName}${contactLine}`;
+    message = `*${bName} - Invoice Reminder*\n\nHello ${clientName},\nThis is a friendly reminder that invoice *#${invoiceNumber}* for *${formattedAmount}* is due on *${formattedDeadline}*.\n\nYou can pay quickly and securely via UPI / Cards here:\n${link}\n\nThank you,\n${bName}${contactLine}`;
   }
 
   return {

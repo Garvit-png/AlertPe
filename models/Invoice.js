@@ -35,11 +35,21 @@ const invoiceSchema = new mongoose.Schema({
     required: [true, 'Due date is required'],
     index: true
   },
+  dueTime: {
+    type: String,
+    default: '18:00', // HH:mm format, e.g. 18:00 (6:00 PM) deadline
+    trim: true
+  },
   reminderIntervalDays: {
     type: Number,
     default: 2,
     min: [1, 'Reminder interval must be at least 1 day'],
     max: [30, 'Reminder interval cannot exceed 30 days']
+  },
+  reminderTime: {
+    type: String,
+    default: '16:00', // HH:mm format, e.g. 16:00 (4:00 PM) daily/interval reminder send time
+    trim: true
   },
   lastReminderSentAt: {
     type: Date,
@@ -110,19 +120,38 @@ invoiceSchema.pre('validate', async function(next) {
   next();
 });
 
+// Method: Get exact due Date + Time object
+invoiceSchema.methods.getExactDueDateTime = function() {
+  const due = new Date(this.dueDate);
+  if (this.dueTime && this.dueTime.includes(':')) {
+    const [h, m] = this.dueTime.split(':').map(Number);
+    due.setHours(h || 0, m || 0, 0, 0);
+  }
+  return due;
+};
+
 // Virtual: Days overdue (negative if not yet due)
 invoiceSchema.virtual('daysOverdue').get(function() {
   if (this.status === 'PAID' || this.status === 'DRAFT') return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const now = new Date();
   const due = new Date(this.dueDate);
-  due.setHours(0, 0, 0, 0);
-  return Math.floor((today - due) / (1000 * 60 * 60 * 24));
+  if (this.dueTime && this.dueTime.includes(':')) {
+    const [h, m] = this.dueTime.split(':').map(Number);
+    due.setHours(h || 0, m || 0, 0, 0);
+  }
+  return Math.floor((now - due) / (1000 * 60 * 60 * 24));
 });
 
-// Virtual: Is overdue
+// Virtual: Is overdue (considers exact due date + due time)
 invoiceSchema.virtual('isOverdue').get(function() {
-  return this.daysOverdue !== null && this.daysOverdue > 0;
+  if (this.status === 'PAID' || this.status === 'DRAFT') return false;
+  const now = new Date();
+  const due = new Date(this.dueDate);
+  if (this.dueTime && this.dueTime.includes(':')) {
+    const [h, m] = this.dueTime.split(':').map(Number);
+    due.setHours(h || 0, m || 0, 0, 0);
+  }
+  return now > due;
 });
 
 // Virtual: Days until due (positive if future)
