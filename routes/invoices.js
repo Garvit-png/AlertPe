@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { z } from 'zod';
 import { Invoice, Client, BusinessProfile } from '../models/index.js';
 import { validateBody, validateQuery, validateParams, createInvoiceSchema, updateInvoiceSchema, invoiceQuerySchema } from '../middleware/validate.js';
@@ -7,6 +8,7 @@ import { createPaymentLink, isConfigured as isPaymentConfigured, generateUPIPaym
 import { isConfigured as isWhatsAppConfigured } from '../services/whatsapp.js';
 import { notifyPaymentReceived } from '../services/sse.js';
 import logger from '../utils/logger.js';
+import { getOfflineInvoices, addOfflineInvoice, markOfflineInvoicePaid } from '../services/offline-store.js';
 
 const router = express.Router();
 
@@ -82,6 +84,19 @@ router.post('/generate-payment-link', validateBody(z.object({
  * @query status, clientId, fromDate, toDate, page, limit, sort, order
  */
 router.get('/', validateQuery(invoiceQuerySchema), asyncHandler(async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    const list = getOfflineInvoices({ status: req.query.status });
+    return res.json({
+      data: list,
+      pagination: {
+        page: 1,
+        limit: list.length,
+        total: list.length,
+        pages: 1
+      }
+    });
+  }
+
   const { status, clientId, fromDate, toDate, page = 1, limit = 20, sort = 'dueDate', order = 'asc' } = req.query;
   
   const filter = {};
@@ -142,6 +157,18 @@ router.get('/:id', validateParams(z.object({ id: z.string().min(1) })), asyncHan
 router.post('/', validateBody(createInvoiceSchema), asyncHandler(async (req, res) => {
   const { clientId, amount, description, dueDate, reminderIntervalDays, paymentLink } = req.body;
   
+  if (mongoose.connection.readyState !== 1) {
+    const newInv = addOfflineInvoice({
+      clientId,
+      amount,
+      description,
+      dueDate,
+      reminderIntervalDays,
+      paymentLink: paymentLink || `https://rzp.io/i/mock_INV-${Date.now().toString().slice(-4)}`
+    });
+    return res.status(201).json(newInv);
+  }
+
   // Verify client exists
   const client = await Client.findById(clientId);
   if (!client) {
@@ -278,6 +305,11 @@ router.post('/:id/mark-paid', validateParams(z.object({ id: z.string().min(1) })
   transactionId: z.string().optional(),
   paidAt: z.string().datetime().optional().transform(v => v ? new Date(v) : new Date())
 })), asyncHandler(async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    const inv = markOfflineInvoicePaid(req.params.id);
+    return res.json({ success: true, invoice: inv });
+  }
+
   const invoice = await Invoice.findById(req.params.id).populate('clientId', 'name');
   
   if (!invoice) {

@@ -7,27 +7,39 @@ let isConnected = false;
 let mongodInstance = null;
 
 export async function connectDB() {
-  if (isConnected) {
-    logger.debug('MongoDB already connected');
+  if (mongoose.connection.readyState === 1) {
+    isConnected = true;
     return mongoose.connection;
   }
 
+  const isVercel = !!process.env.VERCEL;
+  const isProduction = process.env.NODE_ENV === 'production';
+  const hasRemoteUri = !!process.env.MONGODB_URI && !process.env.MONGODB_URI.includes('localhost');
+
+  // If on Vercel without a remote MongoDB URI, do not attempt to connect to localhost:27017
+  if (isVercel && !hasRemoteUri) {
+    logger.warn('VERCEL DEPLOYMENT: No remote MONGODB_URI provided in environment variables. Running in graceful offline mode.');
+    mongoose.set('bufferCommands', false);
+    return null;
+  }
+
   const options = {
-    maxPoolSize: 10,           // Connection pool size
-    minPoolSize: 2,            // Minimum connections
-    socketTimeoutMS: 45000,    // Close sockets after 45s inactivity
-    family: 4,                 // Use IPv4, skip trying IPv6
-    autoIndex: process.env.NODE_ENV !== 'production', // Build indexes in dev
-    serverSelectionTimeoutMS: process.env.MONGODB_URI && !process.env.MONGODB_URI.includes('localhost') ? 10000 : 2000,
-    heartbeatFrequencyMS: 10000     // Heartbeat interval
+    maxPoolSize: 10,
+    minPoolSize: 1,
+    socketTimeoutMS: 45000,
+    family: 4,
+    autoIndex: !isProduction,
+    serverSelectionTimeoutMS: hasRemoteUri ? 8000 : 2000,
+    heartbeatFrequencyMS: 10000
   };
 
   try {
     await mongoose.connect(MONGODB_URI, options);
     isConnected = true;
     logger.info({ uri: MONGODB_URI.replace(/\/\/.*@/, '//***:***@') }, 'MongoDB connected');
+    return mongoose.connection;
   } catch (error) {
-    if (process.env.NODE_ENV !== 'production') {
+    if (!isProduction && !isVercel) {
       logger.warn({ err: error.message }, 'Local MongoDB unavailable. Starting in-memory MongoDB...');
       try {
         const { MongoMemoryServer } = await import('mongodb-memory-server');
@@ -44,47 +56,55 @@ export async function connectDB() {
         } catch (seedErr) {
           logger.warn({ err: seedErr.message }, 'Demo data seeding skipped');
         }
+        return mongoose.connection;
       } catch (memError) {
-        logger.fatal({ err: memError }, 'Failed to start in-memory MongoDB');
+        logger.error({ err: memError }, 'Failed to start in-memory MongoDB');
         throw error;
       }
     } else {
-      logger.fatal({ err: error }, 'MongoDB connection failed');
+      // Vercel / Cloud serverless: NEVER crash the process with 500 error!
+      logger.warn({ err: error.message }, 'MongoDB connection failed; running in fallback offline mode');
+      mongoose.set('bufferCommands', false);
+      if (isVercel) {
+        return null;
+      }
       throw error;
     }
   }
+}
 
-  // Connection event handlers
-  mongoose.connection.on('error', (err) => {
-    logger.error({ err }, 'MongoDB connection error');
-    isConnected = false;
-  });
+// Connection event handlers
+mongoose.connection.on('error', (err) => {
+  logger.error({ err: err?.message }, 'MongoDB connection error');
+  isConnected = false;
+});
 
-  mongoose.connection.on('disconnected', () => {
-    logger.warn('MongoDB disconnected');
-    isConnected = false;
-  });
+mongoose.connection.on('disconnected', () => {
+  logger.warn('MongoDB disconnected');
+  isConnected = false;
+});
 
-  mongoose.connection.on('reconnected', () => {
-    logger.info('MongoDB reconnected');
-    isConnected = true;
-  });
+mongoose.connection.on('reconnected', () => {
+  logger.info('MongoDB reconnected');
+  isConnected = true;
+});
 
-  // Graceful shutdown
+// Graceful shutdown (local only)
+if (!process.env.VERCEL) {
   process.on('SIGINT', async () => {
-    await mongoose.connection.close();
-    if (mongodInstance) await mongodInstance.stop();
+    try {
+      await mongoose.connection.close();
+      if (mongodInstance) await mongodInstance.stop();
+    } catch (e) {}
     logger.info('MongoDB connection closed due to app termination');
     process.exit(0);
   });
-
-  return mongoose.connection;
 }
 
 export function getConnectionStatus() {
   return {
-    connected: isConnected,
-    readyState: mongoose.connection.readyState, // 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
+    connected: isConnected && mongoose.connection.readyState === 1,
+    readyState: mongoose.connection.readyState,
     host: mongoose.connection.host,
     name: mongoose.connection.name
   };
@@ -102,7 +122,6 @@ export async function disconnectDB() {
   }
 }
 
-// Helper for transactions
 export async function withTransaction(callback) {
   const session = await mongoose.startSession();
   session.startTransaction();

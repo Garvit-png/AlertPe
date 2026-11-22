@@ -1,8 +1,10 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { Invoice, Bill, Client } from '../models/index.js';
 import { computeForecast, getForecastSummary, getMonthlyChartData } from '../services/cashflow-engine.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import logger from '../utils/logger.js';
+import { getOfflineStats } from '../services/offline-store.js';
 
 const router = express.Router();
 
@@ -11,6 +13,30 @@ const router = express.Router();
  * @desc Get aggregated dashboard statistics
  */
 router.get('/stats', asyncHandler(async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    const stats = getOfflineStats();
+    return res.json({
+      metrics: {
+        totalOwed: stats.totalOwed,
+        unpaidInvoicesCount: stats.unpaidInvoicesCount,
+        totalDueBills: stats.totalDueBills,
+        unpaidBillsCount: stats.unpaidBillsCount,
+        redFlagsCount: stats.redFlagsCount,
+        netCashflow30Days: stats.totalOwed - stats.totalDueBills
+      },
+      upcomingInflows: [],
+      upcomingOutflows: [],
+      forecast: {
+        summary: {
+          lowestProjectedBalance: stats.lowestProjectedBalance,
+          firstDeficitDate: stats.firstDeficitDate,
+          deficitsCount: stats.deficitsCount
+        },
+        monthlyChart: [],
+        dailyData: []
+      }
+    });
+  }
   const currentBalance = Number(process.env.CURRENT_BANK_BALANCE) || 0;
   const today = new Date();
   today.setHours(0, 0, 0, 0);

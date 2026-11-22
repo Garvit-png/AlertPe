@@ -164,8 +164,8 @@ async function recomputeForecast() {
  * Start all cron jobs
  */
 export function startCronJobs() {
-  if (process.env.NODE_ENV === 'test') {
-    logger.info('Skipping cron jobs in test environment');
+  if (process.env.NODE_ENV === 'test' || process.env.VERCEL) {
+    logger.info('Skipping cron jobs in test or serverless environment');
     return;
   }
   

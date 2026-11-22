@@ -1,9 +1,11 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { z } from 'zod';
 import { BusinessProfile } from '../models/index.js';
 import { validateBody } from '../middleware/validate.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import logger from '../utils/logger.js';
+import { getOfflineProfile, updateOfflineProfile } from '../services/offline-store.js';
 
 const router = express.Router();
 
@@ -23,6 +25,11 @@ function normalizePhone(phone) {
  * @desc Get current business owner profile & setup status
  */
 router.get('/profile', asyncHandler(async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    const profile = getOfflineProfile();
+    return res.json({ success: true, profile });
+  }
+
   const profile = await BusinessProfile.getActiveProfile();
   res.json({
     success: true,

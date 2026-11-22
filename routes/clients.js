@@ -1,8 +1,10 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { z } from 'zod';
 import { Client, Invoice } from '../models/index.js';
 import { validateBody, validateQuery, validateParams, createClientSchema, updateClientSchema, clientQuerySchema } from '../middleware/validate.js';
 import { asyncHandler, NotFoundError } from '../middleware/errorHandler.js';
+import { getOfflineClients, addOfflineClient } from '../services/offline-store.js';
 
 const router = express.Router();
 
@@ -12,6 +14,18 @@ const router = express.Router();
  * @query search, page, limit, sort, order
  */
 router.get('/', validateQuery(clientQuerySchema), asyncHandler(async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    const list = getOfflineClients(req.query.search);
+    return res.json({
+      data: list.map(c => ({ ...c, totalOwed: 0, pendingCount: 0 })),
+      pagination: {
+        page: 1,
+        limit: list.length,
+        total: list.length,
+        pages: 1
+      }
+    });
+  }
   const { search, page = 1, limit = 20, sort = 'createdAt', order = 'desc' } = req.query;
   
   const filter = {};
@@ -87,6 +101,11 @@ router.get('/:id', validateParams(z.object({ id: z.string().min(1) })), asyncHan
  * @desc Create new client
  */
 router.post('/', validateBody(createClientSchema), asyncHandler(async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    const newClient = addOfflineClient(req.body);
+    return res.status(201).json(newClient);
+  }
+
   const payload = { ...req.body };
   if (!payload.email || payload.email.trim() === '') {
     delete payload.email;

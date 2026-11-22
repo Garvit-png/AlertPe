@@ -1,8 +1,10 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { z } from 'zod';
 import { Bill, BILL_CATEGORIES } from '../models/index.js';
 import { validateBody, validateQuery, validateParams, createBillSchema, updateBillSchema, billQuerySchema } from '../middleware/validate.js';
 import { asyncHandler, NotFoundError } from '../middleware/errorHandler.js';
+import { getOfflineBills, addOfflineBill, markOfflineBillPaid } from '../services/offline-store.js';
 
 const router = express.Router();
 
@@ -12,6 +14,18 @@ const router = express.Router();
  * @query status, category, fromDate, toDate, page, limit, sort, order
  */
 router.get('/', validateQuery(billQuerySchema), asyncHandler(async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    const list = getOfflineBills();
+    return res.json({
+      data: list,
+      pagination: {
+        page: 1,
+        limit: list.length,
+        total: list.length,
+        pages: 1
+      }
+    });
+  }
   const { status, category, fromDate, toDate, page = 1, limit = 20, sort = 'dueDate', order = 'asc' } = req.query;
   
   const filter = {};
@@ -75,6 +89,11 @@ router.get('/:id', validateParams(z.object({ id: z.string().min(1) })), asyncHan
  * @desc Create new bill
  */
 router.post('/', validateBody(createBillSchema), asyncHandler(async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    const newBill = addOfflineBill(req.body);
+    return res.status(201).json({ success: true, bill: newBill });
+  }
+
   const bill = await Bill.create(req.body);
   
   res.status(201).json({
@@ -111,6 +130,11 @@ router.put('/:id', validateParams(z.object({ id: z.string().min(1) })), validate
 router.post('/:id/mark-paid', validateParams(z.object({ id: z.string().min(1) })), validateBody(z.object({
   paidAt: z.string().datetime().optional().transform(v => v ? new Date(v) : new Date())
 })), asyncHandler(async (req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    const bill = markOfflineBillPaid(req.params.id);
+    return res.json({ success: true, bill });
+  }
+
   const bill = await Bill.findById(req.params.id);
   
   if (!bill) {
