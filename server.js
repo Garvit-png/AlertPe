@@ -158,7 +158,14 @@ app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) {
     return next();
   }
-  res.sendFile(join(__dirname, 'public', 'index.html'));
+  const indexPath = join(__dirname, 'public', 'index.html');
+  res.sendFile(indexPath, (err) => {
+    if (err && !res.headersSent) {
+      // In serverless, static index.html is served directly by Vercel CDN.
+      // If Express is reached for a non-API route, safely redirect to root.
+      res.redirect('/');
+    }
+  });
 });
 
 // --- Error Handler ---

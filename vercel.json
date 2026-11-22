@@ -14,12 +14,8 @@
       "destination": "/api/index.js"
     },
     {
-      "source": "/",
-      "destination": "/public/index.html"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/public/$1"
+      "source": "/((?!api|health).*)",
+      "destination": "/index.html"
     }
   ]
 }
