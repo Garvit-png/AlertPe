@@ -1,0 +1,50 @@
+{
+  "name": "cashpilot",
+  "version": "0.1.0",
+  "description": "Ultra-minimalist financial back-office for solo entrepreneurs - Cash flow automation, WhatsApp reminders, predictive forecasting",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "cron": "node services/cron-jobs.js",
+    "seed": "node scripts/seed.js",
+    "test": "node --test tests/cashflow-engine.test.js",
+    "lint": "eslint . --ext .js",
+    "format": "prettier --write ."
+  },
+  "keywords": [
+    "cashflow",
+    "invoice",
+    "whatsapp",
+    "reminders",
+    "forecasting",
+    "micro-business",
+    "hackathon"
+  ],
+  "author": "CashPilot Team",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "mongoose": "^8.4.1",
+    "node-cron": "^3.0.3",
+    "zod": "^3.23.8",
+    "razorpay": "^2.9.4",
+    "twilio": "^5.1.1",
+    "pino": "^9.1.0",
+    "pino-pretty": "^11.1.0",
+    "dotenv": "^16.4.5",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.3.1",
+    "date-fns": "^2.30.0",
+    "date-fns-tz": "^1.3.8"
+  },
+  "devDependencies": {
+    "eslint": "^9.3.0",
+    "prettier": "^3.2.5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
